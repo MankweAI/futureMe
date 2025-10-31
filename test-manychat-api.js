@@ -4,7 +4,7 @@ require("dotenv").config({ path: ".env.local" });
 
 const axios = require("axios");
 
-// ANSI color codes for console output
+// ANSI color codes
 const colors = {
   reset: "\x1b[0m",
   green: "\x1b[32m",
@@ -16,33 +16,49 @@ const colors = {
 
 const SERVER_URL = "http://localhost:3000/api/webhook";
 
-// Test scenarios
+// Test scenarios with ManyChat format
 const tests = [
   {
     name: "Greeting Message (First-time User)",
-    wa_id: "27721111111",
-    message: "Hi there!",
+    payload: {
+      subscriber_id: "27721111111",
+      first_name: "Test",
+      last_name: "User",
+      text: "Hi there!",
+    },
     expectedIntent: "greeting",
     expectedKeywords: ["Welcome", "FutureMe", "Bursary"],
   },
   {
     name: "Bursary Application Intent",
-    wa_id: "27722222222",
-    message: "I need to find funding for university",
+    payload: {
+      subscriber_id: "27722222222",
+      first_name: "Sarah",
+      last_name: "Student",
+      text: "I need to find funding for university",
+    },
     expectedIntent: "bursary_application",
-    expectedKeywords: ["bursary", "application", "funding"],
+    expectedKeywords: ["bursary", "qualify", "funding"],
   },
   {
     name: "Career Guidance Intent",
-    wa_id: "27723333333",
-    message: "I want career advice and help finding internships",
+    payload: {
+      subscriber_id: "27723333333",
+      first_name: "John",
+      last_name: "Career",
+      text: "I want career advice and help finding internships",
+    },
     expectedIntent: "career_guidance",
     expectedKeywords: ["career", "guidance"],
   },
   {
     name: "Profile Management Intent",
-    wa_id: "27724444444",
-    message: "I want to view my profile",
+    payload: {
+      subscriber_id: "27724444444",
+      first_name: "Profile",
+      last_name: "User",
+      text: "I want to view my profile",
+    },
     expectedIntent: "view_profile",
     expectedKeywords: ["profile"],
   },
@@ -51,23 +67,7 @@ const tests = [
 /**
  * Make a test request to the webhook
  */
-async function makeWebhookRequest(waId, message) {
-  const payload = {
-    version: "v2",
-    contact: {
-      id: waId,
-      name: "Test User",
-      wa_id: waId,
-    },
-    messages: [
-      {
-        id: `msg_${Date.now()}`,
-        type: "text",
-        text: message,
-      },
-    ],
-  };
-
+async function makeWebhookRequest(payload) {
   const response = await axios.post(SERVER_URL, payload, {
     headers: {
       "Content-Type": "application/json",
@@ -79,11 +79,16 @@ async function makeWebhookRequest(waId, message) {
 }
 
 /**
- * Validate response structure
+ * Validate ManyChat v2 response structure
  */
 function validateResponse(response) {
   if (!response) {
     throw new Error("No response received");
+  }
+
+  // Check for ManyChat v2 format
+  if (response.version !== "v2") {
+    console.log(`⚠️ WARNING: Expected version 'v2', got '${response.version}'`);
   }
 
   if (!response.content) {
@@ -125,11 +130,15 @@ async function runTest(test, testNumber, totalTests) {
   console.log(
     `\n${colors.cyan}📋 Test ${testNumber}/${totalTests}: ${test.name}${colors.reset}`
   );
-  console.log(`${colors.blue}   Message: "${test.message}"${colors.reset}`);
-  console.log(`${colors.blue}   wa_id: ${test.wa_id}${colors.reset}`);
+  console.log(
+    `${colors.blue}   Message: "${test.payload.text}"${colors.reset}`
+  );
+  console.log(
+    `${colors.blue}   subscriber_id: ${test.payload.subscriber_id}${colors.reset}`
+  );
 
   try {
-    const response = await makeWebhookRequest(test.wa_id, test.message);
+    const response = await makeWebhookRequest(test.payload);
     const responseText = validateResponse(response);
 
     // Check for expected keywords (loose validation)
@@ -152,10 +161,19 @@ async function runTest(test, testNumber, totalTests) {
       `${colors.green}   ✅ SUCCESS: ${test.name} passed${colors.reset}`
     );
     console.log(
-      `${colors.blue}   Response: "${responseText.substring(0, 100)}${
-        responseText.length > 100 ? "..." : ""
+      `${colors.blue}   Response: "${responseText.substring(0, 150)}${
+        responseText.length > 150 ? "..." : ""
       }"${colors.reset}`
     );
+
+    // Show debug info if available
+    if (response.debug_info) {
+      console.log(
+        `${colors.blue}   Intent: ${response.debug_info.intent || "unknown"}${
+          colors.reset
+        }`
+      );
+    }
 
     return { success: true, test: test.name, response: responseText };
   } catch (error) {
@@ -175,9 +193,11 @@ async function runTest(test, testNumber, totalTests) {
         `${colors.red}   HTTP ${error.response.status}: ${error.response.statusText}${colors.reset}`
       );
       console.log(
-        `${colors.red}   Response: ${JSON.stringify(error.response.data)}${
-          colors.reset
-        }`
+        `${colors.red}   Response: ${JSON.stringify(
+          error.response.data,
+          null,
+          2
+        )}${colors.reset}`
       );
     } else {
       console.log(`${colors.red}   Error: ${error.message}${colors.reset}`);
@@ -195,6 +215,9 @@ async function runAllTests() {
     `${colors.cyan}🧪 Testing ManyChat Webhook Integration...${colors.reset}`
   );
   console.log(`${colors.blue}Server URL: ${SERVER_URL}${colors.reset}`);
+  console.log(
+    `${colors.blue}Format: ManyChat v2 (subscriber_id + text)${colors.reset}`
+  );
   console.log(
     `${colors.blue}OpenAI Key: ${
       process.env.OPENAI_API_KEY ? "✓ Configured" : "✗ Missing"
@@ -214,7 +237,7 @@ async function runAllTests() {
 
     // Wait between tests to avoid rate limiting
     if (i < tests.length - 1) {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await new Promise((resolve) => setTimeout(resolve, 1500));
     }
   }
 
@@ -258,15 +281,6 @@ async function runAllTests() {
     );
     process.exit(1);
   }
-}
-
-// Check if server is specified
-if (process.argv[2]) {
-  const customUrl = process.argv[2];
-  console.log(
-    `${colors.yellow}Using custom server URL: ${customUrl}${colors.reset}`
-  );
-  SERVER_URL = customUrl;
 }
 
 // Run the tests
