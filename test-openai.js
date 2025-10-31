@@ -1,52 +1,51 @@
-// api/test-openai.js
-// Test OpenAI API connection independently
+// test-openai.js
+// This loads all keys from .env.local into process.env
+require("dotenv").config({ path: ".env.local" });
 
-export default async function handler(req, res) {
-  if (req.method !== 'GET') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
+// We are testing the intent analyzer, which uses the OpenAI config
+const { analyzeIntent } = require("./lib/agents/intent-analyzer");
 
+if (!process.env.OPENAI_API_KEY) {
+  console.error("❌ CRITICAL_ERROR: Missing OPENAI_API_KEY in .env.local");
+  process.exit(1);
+}
+
+console.log("Attempting to connect to OpenAI via IntentAnalyzer...");
+
+async function testIntentAnalysis() {
   try {
-    const OpenAI = require('openai');
-    
-    if (!process.env.OPENAI_API_KEY) {
-      return res.status(400).json({
-        success: false,
-        error: 'OpenAI API key not found in environment variables'
-      });
+    const testMessage = "I need to find funding for university";
+    console.log(`\nTesting with message: "${testMessage}"`);
+
+    const intent = await analyzeIntent(testMessage);
+
+    if (intent && intent !== "unknown") {
+      console.log(`✅ OPENAI_SUCCESS: Intent classified as: '${intent}'`);
+    } else {
+      console.warn(
+        `⚠️ OPENAI_WARNING: Intent was 'unknown'. This might be okay, but check your prompt in intent-analyzer.js`
+      );
     }
-
-    const openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-    });
-
-    // Test with a simple request
-    const response = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: [
-        {
-          role: "user",
-          content: "Say 'Hello from OpenAI!' if this connection test is successful."
-        }
-      ],
-      max_tokens: 10
-    });
-
-    return res.status(200).json({
-      success: true,
-      message: 'OpenAI connection successful!',
-      response: response.choices[0].message.content,
-      model: response.model,
-      usage: response.usage
-    });
-
   } catch (error) {
-    console.error('OpenAI test error:', error);
-    
-    return res.status(500).json({
-      success: false,
-      error: 'OpenAI connection failed',
-      details: error.message
-    });
+    console.error("\n❌ OPENAI_ERROR: The API call failed.");
+    if (error.response) {
+      // Handle specific API errors
+      console.error(
+        `Error ${error.response.status}: ${error.response.data.error.message}`
+      );
+      if (error.response.status === 401) {
+        console.error(
+          "FIX: This is an Authentication Error. Check your OPENAI_API_KEY in .env.local"
+        );
+      } else if (error.response.status === 429) {
+        console.error(
+          "FIX: This is a Quota Error. Please check your OpenAI account billing."
+        );
+      }
+    } else {
+      console.error(error.message);
+    }
   }
 }
+
+testIntentAnalysis();
