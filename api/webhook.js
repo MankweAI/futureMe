@@ -1,3 +1,4 @@
+// api/webhook.js
 // Vercel Serverless Function
 const sessionManager = require("../lib/session-manager");
 const brain = require("../lib/agents/brain-agent");
@@ -7,6 +8,8 @@ const { sendManychatResponse } = require("../lib/config/manychat");
  * Main webhook handler for ManyChat
  */
 module.exports = async (req, res) => {
+  // ✅ NOW THIS IS AN ASYNC FUNCTION
+
   // 1. Handle Vercel's preflight/warm-up requests
   if (req.method === "OPTIONS") {
     return res.status(200).send("OK");
@@ -31,22 +34,37 @@ module.exports = async (req, res) => {
         .send("Invalid payload: Missing wa_id or message text.");
     }
 
-    // 4. Get or create the user's session
-    const session = await sessionManager.getSession(waId);
+    console.log(`📥 Webhook received: wa_id=${waId}, message="${userMessage}"`);
 
-    // 5. Add user's message to history
+    // 4. Get or create the user's session
+    console.log(`🔄 Getting session for wa_id: ${waId}`);
+    const session = await sessionManager.getSession(waId);
+    console.log(`✅ Session retrieved:`, JSON.stringify(session, null, 2));
+
+    // 5. Check if session exists and has required fields
+    if (!session || !session.history || !session.state) {
+      console.error("Failed to create valid session for user:", waId);
+      return sendManychatResponse(
+        res,
+        "Sorry, we're having trouble starting your session. Please try again."
+      );
+    }
+
+    // 6. Add user's message to history
     session.history.push({ role: "user", content: userMessage });
 
-    // 6. --- NEW LOGIC ---
-    // Immediately delegate to the brain agent to process the message.
-    // The brain will now handle greetings, intent analysis, and routing
-    // for ALL messages, including the first one.
+    // 7. Process with brain agent
+    console.log(`🧠 Sending to brain agent...`);
     const responseText = await brain.processMessage(userMessage, session);
+    console.log(`✅ Brain response: "${responseText}"`);
 
-    // 7. Send the brain's response back to ManyChat
+    // 8. Send the brain's response back to ManyChat
     return sendManychatResponse(res, responseText, session.debugInfo);
   } catch (error) {
-    console.error("Unhandled error in webhook:", error);
+    console.error("❌ UNHANDLED ERROR in webhook:", error);
+    console.error("Error stack:", error.stack);
+    console.error("Error name:", error.name);
+    console.error("Error message:", error.message);
 
     // Send a generic error message back to the user
     return sendManychatResponse(
