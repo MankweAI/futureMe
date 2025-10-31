@@ -1,75 +1,166 @@
 // api/webhook.js
-// Vercel Serverless Function
+// Vercel Serverless Function - Handles BOTH ManyChat & WhatsApp Cloud API
 const sessionManager = require("../lib/session-manager");
 const brain = require("../lib/agents/brain-agent");
-const { sendManychatResponse } = require("../lib/config/manychat");
 
 /**
- * Main webhook handler for ManyChat
+ * Detect payload format (ManyChat vs WhatsApp Cloud API)
+ */
+function detectPayloadFormat(payload) {
+  if (payload.subscriber_id && payload.text) {
+    return "manychat";
+  }
+  if (payload.contact?.wa_id && payload.messages?.[0]?.text) {
+    return "whatsapp";
+  }
+  return "unknown";
+}
+
+/**
+ * Extract user data from ManyChat payload
+ */
+function extractManyChatData(payload) {
+  return {
+    waId: payload.subscriber_id,
+    userMessage: payload.text,
+    firstName:
+      payload.first_name === "{{first_name}}" ? null : payload.first_name,
+    lastName: payload.last_name === "{{last_name}}" ? null : payload.last_name,
+  };
+}
+
+/**
+ * Extract user data from WhatsApp Cloud API payload
+ */
+function extractWhatsAppData(payload) {
+  return {
+    waId: payload.contact.wa_id,
+    userMessage: payload.messages[0].text,
+    firstName: payload.contact.name?.split(" ")[0] || null,
+    lastName: null,
+  };
+}
+
+/**
+ * Send response in ManyChat format
+ */
+function sendManyChatResponse(res, message, debugInfo = {}) {
+  return res.status(200).json({
+    version: "v2",
+    content: {
+      messages: [{ type: "text", text: message }],
+      quick_replies: [],
+    },
+    debug_info: debugInfo,
+  });
+}
+
+/**
+ * Send response in WhatsApp Cloud API format
+ */
+function sendWhatsAppResponse(res, message) {
+  return res.status(200).json({
+    messaging_product: "whatsapp",
+    to: "placeholder", // Would come from original message
+    text: { body: message },
+  });
+}
+
+/**
+ * Main webhook handler
  */
 module.exports = async (req, res) => {
-  // ✅ NOW THIS IS AN ASYNC FUNCTION
-
-  // 1. Handle Vercel's preflight/warm-up requests
+  // 1. Handle OPTIONS (CORS preflight)
   if (req.method === "OPTIONS") {
     return res.status(200).send("OK");
   }
 
-  // 2. Only allow POST requests
+  // 2. Only allow POST
   if (req.method !== "POST") {
-    return res.status(405).send("Method Not Allowed");
+    return res.status(405).json({ error: "Method Not Allowed" });
   }
 
   try {
     const payload = req.body;
 
-    // 3. Validate incoming payload
-    const waId = payload.contact?.wa_id;
-    const userMessage = payload.messages?.[0]?.text;
+    // 3. Detect format
+    const format = detectPayloadFormat(payload);
+
+    if (format === "unknown") {
+      console.warn(
+        "⚠️ Invalid payload format:",
+        JSON.stringify(payload, null, 2)
+      );
+      return res.status(400).json({
+        error: "Invalid payload format",
+        expected: "ManyChat or WhatsApp Cloud API format",
+        received: Object.keys(payload),
+      });
+    }
+
+    // 4. Extract user data based on format
+    const userData =
+      format === "manychat"
+        ? extractManyChatData(payload)
+        : extractWhatsAppData(payload);
+
+    const { waId, userMessage, firstName } = userData;
 
     if (!waId || !userMessage) {
-      console.warn("Invalid payload received:", payload);
-      return res
-        .status(400)
-        .send("Invalid payload: Missing wa_id or message text.");
+      console.warn("⚠️ Missing required fields:", { waId, userMessage });
+      return res.status(400).json({
+        error: "Missing wa_id or message text",
+        format_detected: format,
+      });
     }
 
-    console.log(`📥 Webhook received: wa_id=${waId}, message="${userMessage}"`);
+    console.log(
+      `📥 ${format.toUpperCase()} webhook: wa_id=${waId}, message="${userMessage}"`
+    );
 
-    // 4. Get or create the user's session
-    console.log(`🔄 Getting session for wa_id: ${waId}`);
+    // 5. Get or create session
     const session = await sessionManager.getSession(waId);
-    console.log(`✅ Session retrieved:`, JSON.stringify(session, null, 2));
 
-    // 5. Check if session exists and has required fields
     if (!session || !session.history || !session.state) {
-      console.error("Failed to create valid session for user:", waId);
-      return sendManychatResponse(
-        res,
-        "Sorry, we're having trouble starting your session. Please try again."
-      );
+      console.error("❌ Failed to create valid session for:", waId);
+      const errorMsg =
+        "Sorry, we're having trouble starting your session. Please try again.";
+      return format === "manychat"
+        ? sendManyChatResponse(res, errorMsg)
+        : sendWhatsAppResponse(res, errorMsg);
     }
 
-    // 6. Add user's message to history
+    // 6. Add user message to history
     session.history.push({ role: "user", content: userMessage });
 
     // 7. Process with brain agent
     console.log(`🧠 Sending to brain agent...`);
     const responseText = await brain.processMessage(userMessage, session);
-    console.log(`✅ Brain response: "${responseText}"`);
+    console.log(`✅ Brain response: "${responseText.substring(0, 100)}..."`);
 
-    // 8. Send the brain's response back to ManyChat
-    return sendManychatResponse(res, responseText, session.debugInfo);
+    // 8. Send response in correct format
+    if (format === "manychat") {
+      return sendManyChatResponse(res, responseText, {
+        format: "manychat",
+        subscriber_id: waId,
+        intent: session.state.intent || "unknown",
+      });
+    } else {
+      return sendWhatsAppResponse(res, responseText);
+    }
   } catch (error) {
-    console.error("❌ UNHANDLED ERROR in webhook:", error);
-    console.error("Error stack:", error.stack);
-    console.error("Error name:", error.name);
-    console.error("Error message:", error.message);
+    console.error("❌ WEBHOOK ERROR:", error.message);
+    console.error("Stack:", error.stack);
 
-    // Send a generic error message back to the user
-    return sendManychatResponse(
-      res,
-      "Sorry, something went wrong on our side. Please try again in a moment."
-    );
+    const errorMsg = "Sorry, something went wrong. Please try again.";
+
+    // Try to detect format from original payload for error response
+    const format = detectPayloadFormat(req.body);
+
+    if (format === "manychat") {
+      return sendManyChatResponse(res, errorMsg, { error: error.message });
+    } else {
+      return sendWhatsAppResponse(res, errorMsg);
+    }
   }
 };
