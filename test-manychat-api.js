@@ -27,7 +27,7 @@ const tests = [
       text: "Hi there!",
     },
     expectedIntent: "greeting",
-    expectedKeywords: ["Welcome", "FutureMe", "Bursary"],
+    expectedKeywords: ["Welcome", "TTI Bursaries", "Bursary"],
   },
   {
     name: "Bursary Application Intent",

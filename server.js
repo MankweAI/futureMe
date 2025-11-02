@@ -22,10 +22,12 @@ app.all("/api/webhook", webhookHandler);
 
 // Add a simple root route to confirm the server is running
 app.get("/", (req, res) => {
-  res.send("FutureMe Backend is running. Send POST requests to /api/webhook.");
+  res.send(
+    "TTI Bursaries Backend is running. Send POST requests to /api/webhook."
+  );
 });
 
 // Start the server
 app.listen(port, () => {
-  console.log(`🚀 FutureMe server listening at http://localhost:${port}`);
+  console.log(`🚀 TTI Bursaries server listening at http://localhost:${port}`);
 });

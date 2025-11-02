@@ -134,7 +134,7 @@ async function runCleanup() {
     `${colors.cyan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`
   );
   console.log(
-    `${colors.cyan}🧹 FutureMe Test Data Cleanup (Auto-mode)${colors.reset}`
+    `${colors.cyan}🧹 TTI Bursaries Test Data Cleanup (Auto-mode)${colors.reset}`
   );
   console.log(
     `${colors.cyan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}\n`
