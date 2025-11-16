@@ -1,26 +1,50 @@
 // api/send-notifications.js
 const { getSupabaseClient } = require("../lib/config/database");
-const { sendTemplateMessage } = require("../lib/twilio-service");
+const { sendTemplateMessage } = require("../lib/twilio-service"); // Assuming this exists
+
+// Define the stages for the progressive flow
+const PROGRESSIVE_STAGES = {
+  AWAIT_VISION: "awaiting_vision",
+  AWAIT_DENOMINATION: "awaiting_denomination",
+  AWAIT_RHYTHM: "awaiting_rhythm",
+  AWAIT_PRAYER_STYLE: "awaiting_prayer_style",
+  AWAIT_FELLOWSHIP_INTEREST: "awaiting_fellowship_interest",
+  AWAIT_MATCH_GENDER_PREF: "awaiting_match_gender_pref",
+  AWAIT_MATCH_AGE_PREF: "awaiting_match_age_pref",
+  PROGRESSIVE_COMPLETE: "progressive_complete",
+};
+
+// --- TEMPLATE MANAGEMENT ---
+// You MUST get these templates approved by Twilio/Meta
+// This maps our internal stage name to the approved template name
+const TEMPLATE_MAP = {
+  [PROGRESSIVE_STAGES.AWAIT_VISION]: "vision_message", // (The "Why" message)
+  [PROGRESSIVE_STAGES.AWAIT_DENOMINATION]: "ask_denomination",
+  [PROGRESSIVE_STAGES.AWAIT_RHYTHM]: "ask_rhythm",
+  [PROGRESSIVE_STAGES.AWAIT_PRAYER_STYLE]: "ask_prayer_style",
+  [PROGRESSIVE_STAGES.AWAIT_FELLOWSHIP_INTEREST]: "ask_fellowship_interest",
+  [PROGRESSIVE_STAGES.AWAIT_MATCH_GENDER_PREF]: "ask_match_gender",
+  [PROGRESSIVE_STAGES.AWAIT_MATCH_AGE_PREF]: "ask_match_age",
+};
 
 // This function must match the Vercel CRON job path
 module.exports = async (req, res) => {
-  // Optional: Add a 'cron secret' to prevent this from being spammed
-  // if (req.headers['authorization'] !== `Bearer ${process.env.CRON_SECRET}`) {
-  //   return res.status(401).json({ error: 'Unauthorized' });
-  // }
-
-  console.log("Starting notification job...");
+  console.log("Starting progressive notification job...");
   const supabase = getSupabaseClient();
-  const sevenDaysAgo = new Date(
-    Date.now() - 7 * 24 * 60 * 60 * 1000
+  const twoDaysAgo = new Date(
+    Date.now() - 2 * 24 * 60 * 60 * 1000
   ).toISOString();
 
-  // 1. Find all users who are on the waitlist AND haven't been notified in 7 days
+  // 1. Find users who are on the waitlist, NOT finished, AND haven't been notified recently
   const { data: users, error } = await supabase
     .from("user_profiles")
     .select("wa_id, profile_data")
     .eq("status", "waitlist_completed")
-    .or(`last_notified_at.is.null,last_notified_at.<=${sevenDaysAgo}`);
+    .neq(
+      "profile_data->>progressive_stage",
+      PROGRESSIVE_STAGES.PROGRESSIVE_COMPLETE
+    )
+    .or(`last_notified_at.is.null,last_notified_at.<=${twoDaysAgo}`); // Wait 2 days between pings
 
   if (error) {
     console.error("Error fetching users for notification:", error);
@@ -28,30 +52,41 @@ module.exports = async (req, res) => {
   }
 
   if (!users || users.length === 0) {
-    console.log("No users eligible for notification.");
+    console.log("No users eligible for progressive onboarding.");
     return res
       .status(200)
       .json({ success: true, sent: 0, message: "No users eligible." });
   }
 
-  // 2. Loop and send messages
+  // 2. Loop and send ONE message to each eligible user
   let sentCount = 0;
   let errorCount = 0;
   const now = new Date().toISOString();
 
   for (const user of users) {
     const userName = user.profile_data.name || "Friend";
+    const currentStage =
+      user.profile_data.progressive_stage || PROGRESSIVE_STAGES.AWAIT_VISION;
 
-    // Example: Send the 'weekly_drip' template
+    const templateName = TEMPLATE_MAP[currentStage];
+    if (!templateName) {
+      console.warn(
+        `No template found for stage ${currentStage} for user ${user.wa_id}`
+      );
+      continue; // Skip this user
+    }
+
+    // Example: Send the 'vision_message' template
     const result = await sendTemplateMessage(
       user.wa_id,
-      process.env.TWILIO_TEMPLATE_SID, // or by name, e.g., 'weekly_drip'
-      { 1: userName, 2: "14" } // Example variables
+      templateName, // e.g., 'vision_message'
+      { 1: userName } // Variables (e.g., {{1}} = user's name)
     );
 
     if (result.success) {
       sentCount++;
-      // 3. Update their timestamp so we don't spam them
+      // 3. Update their timestamp. We DON'T update their stage here.
+      // The menu-agent will update their stage when they REPLY.
       await supabase
         .from("user_profiles")
         .update({ last_notified_at: now })
@@ -61,10 +96,9 @@ module.exports = async (req, res) => {
     }
   }
 
-  const message = `Notification job complete. Sent: ${sentCount}, Failed: ${errorCount}.`;
+  const message = `Progressive job complete. Sent: ${sentCount}, Failed: ${errorCount}.`;
   console.log(message);
   return res
     .status(200)
     .json({ success: true, sent: sentCount, failed: errorCount, message });
 };
-
