@@ -1,8 +1,9 @@
 // test-manychat-api.js
-// Comprehensive end-to-end test for ManyChat webhook integration
+// End-to-end test for Christ Connect webhook integration
 require("dotenv").config({ path: ".env.local" });
 
 const axios = require("axios");
+const { createClient } = require("@supabase/supabase-js");
 
 // ANSI color codes
 const colors = {
@@ -16,240 +17,171 @@ const colors = {
 
 const SERVER_URL = "http://localhost:3000/api/webhook";
 
-// Test scenarios with ManyChat format
+// --- NEW CHRIST CONNECT TEST SCENARIOS ---
 const tests = [
   {
-    name: "Greeting Message (First-time User)",
+    name: "New User Onboarding (First Message)",
     payload: {
-      subscriber_id: "27721111111",
-      first_name: "Test",
+      subscriber_id: "27721111111", // NEW USER
+      first_name: "New",
       last_name: "User",
-      text: "Hi there!",
+      text: "Hi",
     },
-    expectedIntent: "greeting",
-    expectedKeywords: ["Welcome", "TTI Bursaries", "Bursary"],
+    // We expect the welcome message from the onboarding-agent
+    expectedKeywords: ["Welcome to Christ Connect", "I Agree & Join"],
   },
   {
-    name: "Bursary Application Intent",
+    name: "Returning User (Menu Request)",
     payload: {
-      subscriber_id: "27722222222",
-      first_name: "Sarah",
-      last_name: "Student",
-      text: "I need to find funding for university",
-    },
-    expectedIntent: "bursary_application",
-    expectedKeywords: ["bursary", "qualify", "funding"],
-  },
-  {
-    name: "Career Guidance Intent",
-    payload: {
-      subscriber_id: "27723333333",
-      first_name: "John",
-      last_name: "Career",
-      text: "I want career advice and help finding internships",
-    },
-    expectedIntent: "career_guidance",
-    expectedKeywords: ["career", "guidance"],
-  },
-  {
-    name: "Profile Management Intent",
-    payload: {
-      subscriber_id: "27724444444",
-      first_name: "Profile",
+      subscriber_id: "27722222222", // RETURNING USER
+      first_name: "Returning",
       last_name: "User",
-      text: "I want to view my profile",
+      text: "Menu",
     },
-    expectedIntent: "view_profile",
-    expectedKeywords: ["profile"],
+    // We expect the countdown menu from the menu-agent
+    expectedKeywords: [
+      "Welcome back",
+      "Matching officially opens",
+      "Share an Idea",
+    ],
+    // This test requires setup
+    setup: async (waId) => {
+      console.log(
+        `   ${colors.yellow}SETUP: Setting user ${waId} status to 'waitlist_completed'...${colors.reset}`
+      );
+      const supabase = createClient(
+        process.env.SUPABASE_URL,
+        process.env.SUPABASE_ANON_KEY
+      );
+      // Ensure user exists and is on the waitlist
+      await supabase
+        .from("user_profiles")
+        .upsert(
+          {
+            wa_id: waId,
+            status: "waitlist_completed",
+            profile_data: { name: "Returning" },
+          },
+          { onConflict: "wa_id" }
+        );
+    },
   },
 ];
 
-/**
- * Make a test request to the webhook
- */
 async function makeWebhookRequest(payload) {
   const response = await axios.post(SERVER_URL, payload, {
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     timeout: 10000,
   });
-
   return response.data;
 }
 
-/**
- * Validate ManyChat v2 response structure
- */
 function validateResponse(response) {
-  if (!response) {
-    throw new Error("No response received");
-  }
-
-  // Check for ManyChat v2 format
-  if (response.version !== "v2") {
+  if (!response) throw new Error("No response received");
+  if (response.version !== "v2")
     console.log(`⚠️ WARNING: Expected version 'v2', got '${response.version}'`);
-  }
-
-  if (!response.content) {
-    throw new Error("Response missing 'content' field");
-  }
-
-  if (!response.content.messages || !Array.isArray(response.content.messages)) {
-    throw new Error("Response missing 'content.messages' array");
-  }
-
-  if (response.content.messages.length === 0) {
-    throw new Error("Response messages array is empty");
-  }
-
-  const firstMessage = response.content.messages[0];
-  if (firstMessage.type !== "text") {
-    throw new Error(`Expected message type 'text', got '${firstMessage.type}'`);
-  }
-
-  if (!firstMessage.text || typeof firstMessage.text !== "string") {
-    throw new Error("Response message text is missing or invalid");
-  }
-
-  return firstMessage.text;
+  if (!response.content?.messages?.[0]?.text)
+    throw new Error("Response missing 'content.messages[0].text'");
+  return response.content.messages[0].text;
 }
 
-/**
- * Check if response contains expected keywords
- */
 function containsKeywords(text, keywords) {
   const lowerText = text.toLowerCase();
-  return keywords.some((keyword) => lowerText.includes(keyword.toLowerCase()));
+  return keywords.every((keyword) => lowerText.includes(keyword.toLowerCase()));
 }
 
-/**
- * Run a single test
- */
 async function runTest(test, testNumber, totalTests) {
   console.log(
     `\n${colors.cyan}📋 Test ${testNumber}/${totalTests}: ${test.name}${colors.reset}`
   );
   console.log(
-    `${colors.blue}   Message: "${test.payload.text}"${colors.reset}`
-  );
-  console.log(
-    `${colors.blue}   subscriber_id: ${test.payload.subscriber_id}${colors.reset}`
+    `   ${colors.blue}Message: "${test.payload.text}" (User: ${test.payload.subscriber_id})${colors.reset}`
   );
 
   try {
+    // Run setup hook if it exists
+    if (test.setup) {
+      await test.setup(test.payload.subscriber_id);
+    }
+
     const response = await makeWebhookRequest(test.payload);
     const responseText = validateResponse(response);
 
-    // Check for expected keywords (loose validation)
     const hasExpectedContent = containsKeywords(
       responseText,
       test.expectedKeywords
     );
 
     if (!hasExpectedContent) {
-      console.log(
-        `${
-          colors.yellow
-        }   ⚠️ WARNING: Response doesn't contain expected keywords: ${test.expectedKeywords.join(
-          ", "
-        )}${colors.reset}`
+      throw new Error(
+        `Response did not contain expected keywords: "${test.expectedKeywords.join(
+          '", "'
+        )}"`
       );
     }
 
     console.log(
-      `${colors.green}   ✅ SUCCESS: ${test.name} passed${colors.reset}`
+      `   ${colors.green}✅ SUCCESS: ${test.name} passed${colors.reset}`
     );
     console.log(
-      `${colors.blue}   Response: "${responseText.substring(0, 150)}${
-        responseText.length > 150 ? "..." : ""
-      }"${colors.reset}`
+      `   ${colors.blue}Response: "${responseText.substring(0, 70)}..."${
+        colors.reset
+      }`
     );
-
-    // Show debug info if available
-    if (response.debug_info) {
-      console.log(
-        `${colors.blue}   Intent: ${response.debug_info.intent || "unknown"}${
-          colors.reset
-        }`
-      );
-    }
-
-    return { success: true, test: test.name, response: responseText };
+    return { success: true, test: test.name };
   } catch (error) {
     console.log(
-      `${colors.red}   ❌ FAILURE: ${test.name} failed${colors.reset}`
+      `   ${colors.red}❌ FAILURE: ${test.name} failed${colors.reset}`
     );
-
     if (error.code === "ECONNREFUSED") {
       console.log(
-        `${colors.red}   Error: Cannot connect to server at ${SERVER_URL}${colors.reset}`
+        `   ${colors.red}Error: Cannot connect to server at ${SERVER_URL}${colors.reset}`
       );
       console.log(
-        `${colors.yellow}   Make sure the server is running with: npm run dev${colors.reset}`
+        `   ${colors.yellow}Make sure the server is running with: npm run dev${colors.reset}`
       );
     } else if (error.response) {
       console.log(
-        `${colors.red}   HTTP ${error.response.status}: ${error.response.statusText}${colors.reset}`
-      );
-      console.log(
-        `${colors.red}   Response: ${JSON.stringify(
-          error.response.data,
-          null,
-          2
-        )}${colors.reset}`
+        `   ${colors.red}HTTP ${error.response.status}: ${error.response.statusText}${colors.reset}`
       );
     } else {
-      console.log(`${colors.red}   Error: ${error.message}${colors.reset}`);
+      console.log(`   ${colors.red}Error: ${error.message}${colors.reset}`);
+      console.log(
+        `   ${colors.yellow}Response Text: "${error.response?.data?.content?.messages[0]?.text}"${colors.reset}`
+      );
     }
-
     return { success: false, test: test.name, error: error.message };
   }
 }
 
-/**
- * Main test runner
- */
 async function runAllTests() {
   console.log(
-    `${colors.cyan}🧪 Testing ManyChat Webhook Integration...${colors.reset}`
+    `${colors.cyan}🧪 Testing Christ Connect Webhook Integration...${colors.reset}`
   );
   console.log(`${colors.blue}Server URL: ${SERVER_URL}${colors.reset}`);
-  console.log(
-    `${colors.blue}Format: ManyChat v2 (subscriber_id + text)${colors.reset}`
+
+  // Clean up test data first
+  console.log(`${colors.yellow}Cleaning test users...${colors.reset}`);
+  const supabase = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_ANON_KEY
   );
-  console.log(
-    `${colors.blue}OpenAI Key: ${
-      process.env.OPENAI_API_KEY ? "✓ Configured" : "✗ Missing"
-    }${colors.reset}`
-  );
-  console.log(
-    `${colors.blue}Supabase URL: ${
-      process.env.SUPABASE_URL ? "✓ Configured" : "✗ Missing"
-    }${colors.reset}`
-  );
+  await supabase
+    .from("user_profiles")
+    .delete()
+    .in("wa_id", ["27721111111", "277222222İ"]);
 
   const results = [];
-
   for (let i = 0; i < tests.length; i++) {
     const result = await runTest(tests[i], i + 1, tests.length);
     results.push(result);
-
-    // Wait between tests to avoid rate limiting
-    if (i < tests.length - 1) {
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
   }
 
   // Summary
   console.log(
-    `\n${colors.cyan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`
+    `\n${colors.cyan}━━━━━━━━━━━━━━━━ Test Summary ━━━━━━━━━━━━━━━━${colors.reset}`
   );
-  console.log(`${colors.cyan}📊 Test Summary${colors.reset}`);
-  console.log(
-    `${colors.cyan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`
-  );
-
   const passed = results.filter((r) => r.success).length;
   const failed = results.filter((r) => !r.success).length;
 
@@ -263,27 +195,19 @@ async function runAllTests() {
   console.log(
     `${colors.cyan}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`
   );
-
   if (failed === 0) {
     console.log(
-      `\n${colors.green}✅ ALL TESTS PASSED (${passed}/${results.length})${colors.reset}`
-    );
-    console.log(
-      `${colors.green}🎉 ManyChat webhook integration is working correctly!${colors.reset}\n`
+      `\n${colors.green}✅ ALL TESTS PASSED (${passed}/${results.length})${colors.reset}\n`
     );
     process.exit(0);
   } else {
     console.log(
-      `\n${colors.red}❌ SOME TESTS FAILED (${passed} passed, ${failed} failed)${colors.reset}`
-    );
-    console.log(
-      `${colors.yellow}⚠️ Please review the errors above and fix them.${colors.reset}\n`
+      `\n${colors.red}❌ TESTS FAILED (${passed} passed, ${failed} failed)${colors.reset}\n`
     );
     process.exit(1);
   }
 }
 
-// Run the tests
 runAllTests().catch((error) => {
   console.error(`${colors.red}❌ Critical error running tests:${colors.reset}`);
   console.error(error);

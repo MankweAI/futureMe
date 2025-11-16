@@ -1,8 +1,6 @@
 // test-supabase.js
-// This loads all keys from .env.local into process.env
 require("dotenv").config({ path: ".env.local" });
 
-// We are now testing the connection EXACTLY how session-manager.js does it.
 const { createClient } = require("@supabase/supabase-js");
 
 const supabaseUrl = process.env.SUPABASE_URL;
@@ -21,38 +19,72 @@ console.log("Attempting to connect to Supabase...");
 console.log(`Supabase URL: ${supabaseUrl}\n`);
 
 async function testSupabaseConnection() {
+  let success = true;
+
   try {
-    // We will test the connection by trying to read a table.
-    // 'chat_sessions' is the table used by session-manager.js
-    // .select('*').limit(1) is a simple, low-cost "ping".
-    const { data, error } = await supabase
+    // Test 1: Check chat_sessions table (from original project)
+    console.log("Checking 'chat_sessions' table...");
+    const { error: sessionError } = await supabase
       .from("chat_sessions")
       .select("*")
       .limit(1);
 
-    if (error) {
-      // Handle Supabase-specific errors (e.g., table not found)
-      // Updated this check to be more robust and catch your specific error message.
-      const isTableNotFoundError =
-        error.code === "42P01" ||
-        (error.message && error.message.includes("Could not find the table"));
-
-      if (isTableNotFoundError) {
-        console.warn(
-          '⚠️ SUPABASE_WARNING: Connection successful, but the table "chat_sessions" does not exist.'
-        );
-        console.log(
-          "This is OK! The table will be created when you run the app (see next step)."
-        );
-        console.log("✅ SUPABASE_SUCCESS: Connection credentials are correct!");
-      } else {
-        console.error("❌ SUPABASE_ERROR: Could not connect to Supabase.");
-        console.error(error.message);
-      }
+    if (sessionError && sessionError.code !== "42P01") {
+      // 42P01 = table does not exist
+      console.error("❌ SUPABASE_ERROR (chat_sessions):", sessionError.message);
+      success = false;
+    } else if (sessionError && sessionError.code === "42P01") {
+      console.warn(
+        "⚠️ 'chat_sessions' table not found. This might be okay if you renamed it, but session-manager expects it."
+      );
+      success = false;
     } else {
-      // If data is returned (even an empty array), the connection is perfect.
+      console.log("✅ 'chat_sessions' table is accessible.");
+    }
+
+    // Test 2: Check NEW user_profiles table
+    console.log("\nChecking 'user_profiles' table...");
+    const { error: profileError } = await supabase
+      .from("user_profiles")
+      .select("*")
+      .limit(1);
+
+    if (profileError && profileError.code === "42P01") {
+      console.error("❌ CRITICAL_ERROR: 'user_profiles' table not found!");
+      console.error("FIX: Run the SQL query from Step 1 to create it.");
+      success = false;
+    } else if (profileError) {
+      console.error("❌ SUPABASE_ERROR (user_profiles):", profileError.message);
+      success = false;
+    } else {
       console.log(
-        '✅ SUPABASE_SUCCESS: Connected to Supabase and "chat_sessions" table successfully!'
+        "✅ 'user_profiles' table is accessible. (Dashboard metrics READY)"
+      );
+    }
+
+    // Test 3: Check NEW suggestions table
+    console.log("\nChecking 'suggestions' table...");
+    const { error: suggestionError } = await supabase
+      .from("suggestions")
+      .select("*")
+      .limit(1);
+
+    if (suggestionError && suggestionError.code === "42P01") {
+      console.error("❌ CRITICAL_ERROR: 'suggestions' table not found!");
+      console.error("FIX: Run the SQL query from Step 1 to create it.");
+      success = false;
+    } else {
+      console.log(
+        "✅ 'suggestions' table is accessible. (Suggestion box READY)"
+      );
+    }
+
+    console.log("\n--- Supabase Test Summary ---");
+    if (success) {
+      console.log("✅ SUPABASE_SUCCESS: All required tables are connected!");
+    } else {
+      console.log(
+        "❌ SUPABASE_FAILURE: One or more table checks failed. See errors above."
       );
     }
   } catch (err) {
