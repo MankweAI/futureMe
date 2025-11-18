@@ -31,3 +31,21 @@ CREATE TABLE IF NOT EXISTS suggestions (
     FOREIGN KEY (user_wa_id) REFERENCES user_profiles(wa_id)
 );
 
+// AI persona database script 
+-- Update existing user_profiles to support new JSONB structure better
+COMMENT ON COLUMN user_profiles.profile_data IS 'Stores: age, city, job, denomination, kids, interests, photo_id';
+
+-- Create the Matches/Connections table
+CREATE TABLE IF NOT EXISTS connections (
+    id BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    user_a_id TEXT NOT NULL, -- Initiator (WhatsApp ID)
+    user_b_id TEXT NOT NULL, -- Receiver (WhatsApp ID)
+    status TEXT DEFAULT 'pending', -- pending, accepted, rejected, bridge_open
+    match_score FLOAT, -- e.g., 0.89
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Create an index for fast match lookups
+CREATE INDEX IF NOT EXISTS idx_connections_users ON connections(user_a_id, user_b_id);
+
