@@ -49,3 +49,16 @@ CREATE TABLE IF NOT EXISTS connections (
 -- Create an index for fast match lookups
 CREATE INDEX IF NOT EXISTS idx_connections_users ON connections(user_a_id, user_b_id);
 
+
+-- Stores the active conversation state and history
+CREATE TABLE IF NOT EXISTS chat_sessions (
+    id BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    wa_id TEXT NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    last_updated TIMESTAMPTZ DEFAULT NOW(),
+    session_data JSONB DEFAULT '{}'
+);
+
+-- Create an index for fast lookups
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_wa_id ON chat_sessions(wa_id);
+
